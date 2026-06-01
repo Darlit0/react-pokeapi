@@ -1,8 +1,15 @@
+import Link from "next/link";
+
 import PokemonSideCarousels from "./PokemonSideCarousels";
 
 export default function HomeMenu() {
   return (
     <div className="hero relative min-h-screen bg-base-200">
+      <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6">
+        <Link href="/login" className="btn btn-primary btn-sm sm:btn-md">
+          Connexion
+        </Link>
+      </div>
       <PokemonSideCarousels />
       <div className="hero-content relative z-10 flex-col gap-8 px-4 py-12">
         <div className="text-center">
