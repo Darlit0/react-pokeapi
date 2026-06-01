@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Quel est ce Pokémon ? — Stats Edition",
+  title: "Quel est ce Pokémon ? - PokeFindr",
   description:
-    "Devine le Pokémon à partir de ses statistiques. Un jeu inspiré de « Quel est ce Pokémon ? ».",
+    "Trouve le Pokémon à partir de ses statistiques. Un jeu inspiré de « Quel est ce Pokémon ? ».",
 };
 
 export default function RootLayout({

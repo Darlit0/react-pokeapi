@@ -1,7 +1,10 @@
+import PokemonSideCarousels from "./PokemonSideCarousels";
+
 export default function HomeMenu() {
   return (
-    <div className="hero min-h-screen bg-base-200">
-      <div className="hero-content flex-col gap-8 px-4 py-12">
+    <div className="hero relative min-h-screen bg-base-200">
+      <PokemonSideCarousels />
+      <div className="hero-content relative z-10 flex-col gap-8 px-4 py-12">
         <div className="text-center">
           <span className="badge badge-primary badge-lg mb-4">PokeFindr</span>
           <h1 className="text-4xl font-bold sm:text-5xl">

@@ -2,3 +2,16 @@
 @plugin "daisyui" {
   themes: lemonade --default;
 }
+
+@keyframes pokemon-scroll-down {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+.pokemon-scroll-track {
+  animation: pokemon-scroll-down var(--scroll-duration, 40s) linear infinite;
+}
