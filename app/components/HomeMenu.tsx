@@ -43,6 +43,16 @@ function formatPokemonName(name: string): string {
     .join(" ");
 }
 
+function formatGenerationLabel(generationSlug: string): string {
+  // PokeAPI renvoie typiquement: "generation-i", "generation-ii", "generation-ix", ...
+  const parts = generationSlug.split("-");
+  if (parts.length === 2 && parts[0] === "generation") {
+    return `Generation ${parts[1].toUpperCase()}`;
+  }
+  // Fallback générique.
+  return formatPokemonName(generationSlug);
+}
+
 function getStat(statName: string, stats: Array<{ base_stat: number; stat: { name: string } }>) {
   return stats.find((entry) => entry.stat.name === statName)?.base_stat ?? 0;
 }
@@ -97,7 +107,7 @@ async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
         const speciesData = await speciesResponse.json();
         frenchName = getLocalizedSpeciesName(speciesData.names ?? [], "fr");
         generationSlug = speciesData.generation?.name ?? null;
-        generation = generationSlug ? formatPokemonName(generationSlug) : null;
+        generation = generationSlug ? formatGenerationLabel(generationSlug) : null;
       }
     } catch {
       frenchName = null;
