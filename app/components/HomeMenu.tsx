@@ -9,6 +9,8 @@ type PokemonData = {
   id: number;
   name: string;
   frenchName: string | null;
+  generation: string | null;
+  generationSlug: string | null;
   sprite: string | null;
   types: Array<{ english: string; french: string | null }>;
   stats: {
@@ -24,6 +26,7 @@ type PokemonData = {
 const MAX_POINTS = 5;
 const MAX_POKEMON_ID = 151;
 const typeNameCache = new Map<string, string | null>();
+const generationNamesCache = new Map<string, string[]>();
 
 function normalizePokemonName(value: string): string {
   return value
@@ -83,6 +86,8 @@ async function fetchRandomPokemon(): Promise<PokemonData> {
 
   const data = await response.json();
   let frenchName: string | null = null;
+  let generation: string | null = null;
+  let generationSlug: string | null = null;
 
   if (data.species?.url) {
     try {
@@ -90,9 +95,13 @@ async function fetchRandomPokemon(): Promise<PokemonData> {
       if (speciesResponse.ok) {
         const speciesData = await speciesResponse.json();
         frenchName = getLocalizedSpeciesName(speciesData.names ?? [], "fr");
+        generationSlug = speciesData.generation?.name ?? null;
+        generation = generationSlug ? formatPokemonName(generationSlug) : null;
       }
     } catch {
       frenchName = null;
+      generation = null;
+      generationSlug = null;
     }
   }
 
@@ -130,6 +139,8 @@ async function fetchRandomPokemon(): Promise<PokemonData> {
     id: data.id,
     name: data.name,
     frenchName,
+    generation,
+    generationSlug,
     sprite: data.sprites?.front_default ?? null,
     types,
     stats: {
@@ -141,6 +152,23 @@ async function fetchRandomPokemon(): Promise<PokemonData> {
       specialDefense: getStat("special-defense", data.stats),
     },
   };
+}
+
+async function fetchGenerationPokemonNames(generationSlug: string): Promise<string[]> {
+  const cached = generationNamesCache.get(generationSlug);
+  if (cached) return cached;
+
+  const response = await fetch(`https://pokeapi.co/api/v2/generation/${generationSlug}`);
+  if (!response.ok) {
+    return [];
+  }
+
+  const data = await response.json();
+  const names = (data.pokemon_species ?? []).map((entry: { name: string }) =>
+    formatPokemonName(entry.name)
+  );
+  generationNamesCache.set(generationSlug, names);
+  return names;
 }
 
 function HomeCard({ onStart }: { onStart: () => void }) {
@@ -186,6 +214,7 @@ function HomeCard({ onStart }: { onStart: () => void }) {
 
 function GameCard({
   pokemon,
+  generationLabel,
   points,
   flashSignal,
   guess,
@@ -195,23 +224,28 @@ function GameCard({
   error,
   onGuessChange,
   onGuessSubmit,
+  onForfeit,
+  onGoHome,
   onNextRound,
 }: {
   pokemon: PokemonData | null;
+  generationLabel: string;
   points: number;
   flashSignal: number;
   guess: string;
   suggestions: string[];
-  lastOutcome: "win" | "lose" | null;
+  lastOutcome: "win" | "lose" | "forfeit" | null;
   loading: boolean;
   error: string | null;
   onGuessChange: (value: string) => void;
   onGuessSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onForfeit: () => void;
+  onGoHome: () => void;
   onNextRound: () => void;
 }) {
-  const canShowTypes = points <= 2;
+  const canShowTypes = points <= 3;
   const canShowSprite = points <= 1;
-  const gameOver = points === 0;
+  const gameOver = points === 0 || lastOutcome !== null;
   const [flashHit, setFlashHit] = useState(false);
 
   useEffect(() => {
@@ -231,11 +265,14 @@ function GameCard({
       .join(" / ") ?? "-";
   const revealName = pokemon ? getRevealPokemonName(pokemon) : "-";
   const showResultModal = lastOutcome !== null && pokemon !== null;
-  const modalTitle = lastOutcome === "win" ? "Victoire !" : "Perdu !";
+  const modalTitle =
+    lastOutcome === "win" ? "Victoire !" : lastOutcome === "forfeit" ? "Forfeit" : "Perdu !";
   const modalText =
     lastOutcome === "win"
       ? "Bien joue, tu as trouve le bon Pokemon."
-      : "Tu as perdu cette manche.";
+      : lastOutcome === "forfeit"
+        ? "Tu as abandonne la manche."
+        : "Tu as perdu cette manche.";
 
   return (
     <div className={`card game-card-danger relative w-full max-w-5xl shadow-xl ${flashHit ? "is-hit" : ""}`}>
@@ -249,6 +286,9 @@ function GameCard({
             {points} pts
           </div>
         </div>
+        <p className="text-center text-2xl font-bold text-base-content md:text-3xl">
+          Génération : <span className="text-primary">{generationLabel}</span>
+        </p>
 
         {loading && <div className="alert">Chargement du Pokémon...</div>}
         {error && <div className="alert alert-error">{error}</div>}
@@ -277,7 +317,7 @@ function GameCard({
             <div className="grid gap-4 md:grid-cols-3">
               <div className="stats shadow">
                 <div className="stat">
-                  <div className="stat-title text-sm">Type(s) (2 points restants)</div>
+                  <div className="stat-title text-sm">Type(s) (3 points restants)</div>
                   <div className="stat-value whitespace-normal break-words text-primary text-2xl leading-tight md:text-3xl">
                     {canShowTypes ? displayTypes : "???"}
                   </div>
@@ -286,7 +326,7 @@ function GameCard({
 
               <div className="stats shadow">
                 <div className="stat">
-                  <div className="stat-title text-sm">Sp. Atk / Sp. Def (2 points restants)</div>
+                  <div className="stat-title text-sm">Sp. Atk / Sp. Def (3 points restants)</div>
                   <div className="stat-value text-secondary text-3xl">
                     {canShowTypes
                       ? `${pokemon.stats.specialAttack} / ${pokemon.stats.specialDefense}`
@@ -337,8 +377,8 @@ function GameCard({
             </datalist>
 
             <div className="card-actions justify-end">
-              <button type="button" className="btn btn-outline btn-lg" onClick={onNextRound}>
-                Nouvelle manche
+              <button type="button" className="btn btn-outline btn-lg" onClick={onForfeit} disabled={gameOver}>
+                Forfeit
               </button>
             </div>
           </>
@@ -364,9 +404,20 @@ function GameCard({
             </div>
             <p className="text-center text-base">{modalText}</p>
             <div className="modal-action">
-              <button type="button" className="btn btn-primary w-full" onClick={onNextRound}>
-                Nouvelle manche
-              </button>
+              {lastOutcome === "forfeit" ? (
+                <>
+                  <button type="button" className="btn btn-outline flex-1" onClick={onGoHome}>
+                    Home
+                  </button>
+                  <button type="button" className="btn btn-primary flex-1" onClick={onNextRound}>
+                    Relancer une partie
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn btn-primary w-full" onClick={onNextRound}>
+                  Relancer une partie
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -380,9 +431,9 @@ export default function HomeMenu() {
   const [pokemon, setPokemon] = useState<PokemonData | null>(null);
   const [points, setPoints] = useState(MAX_POINTS);
   const [flashSignal, setFlashSignal] = useState(0);
-  const [lastOutcome, setLastOutcome] = useState<"win" | "lose" | null>(null);
+  const [lastOutcome, setLastOutcome] = useState<"win" | "lose" | "forfeit" | null>(null);
   const [guess, setGuess] = useState("");
-  const [allPokemonNames, setAllPokemonNames] = useState<string[]>([]);
+  const [generationPokemonNames, setGenerationPokemonNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -391,37 +442,38 @@ export default function HomeMenu() {
     const normalizedGuess = normalizePokemonName(guess);
     if (normalizedGuess.length < 3) return [];
 
-    return allPokemonNames
+    return generationPokemonNames
       .filter((name) => normalizePokemonName(name).includes(normalizedGuess))
       .slice(0, 10);
-  }, [allPokemonNames, guess]);
+  }, [generationPokemonNames, guess]);
 
   useEffect(() => {
     let isCancelled = false;
 
-    async function loadPokemonNames() {
+    async function loadGenerationPokemonNames() {
+      if (!pokemon?.generationSlug) {
+        setGenerationPokemonNames([]);
+        return;
+      }
+
       try {
-        const response = await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${MAX_POKEMON_ID}`);
-        if (!response.ok) return;
-
-        const data = await response.json();
-        if (isCancelled) return;
-
-        const englishNames = (data.results ?? []).map((entry: { name: string }) =>
-          formatPokemonName(entry.name)
-        );
-        setAllPokemonNames(englishNames);
+        const names = await fetchGenerationPokemonNames(pokemon.generationSlug);
+        if (!isCancelled) {
+          setGenerationPokemonNames(names);
+        }
       } catch {
-        // Suggestions are optional; ignore failure.
+        if (!isCancelled) {
+          setGenerationPokemonNames([]);
+        }
       }
     }
 
-    loadPokemonNames();
+    loadGenerationPokemonNames();
 
     return () => {
       isCancelled = true;
     };
-  }, []);
+  }, [pokemon?.generationSlug]);
 
   async function startRound() {
     setLoading(true);
@@ -431,6 +483,7 @@ export default function HomeMenu() {
     setFlashSignal(0);
     setLastOutcome(null);
     setGuess("");
+    setGenerationPokemonNames([]);
 
     try {
       const randomPokemon = await fetchRandomPokemon();
@@ -477,6 +530,22 @@ export default function HomeMenu() {
     setGuess("");
   }
 
+  function handleForfeit() {
+    if (!pokemon || lastOutcome !== null) return;
+    setLastOutcome("forfeit");
+  }
+
+  function handleGoHome() {
+    setIsPlaying(false);
+    setPokemon(null);
+    setPoints(MAX_POINTS);
+    setFlashSignal(0);
+    setLastOutcome(null);
+    setGuess("");
+    setError(null);
+    setGenerationPokemonNames([]);
+  }
+
   return (
     <div className="hero relative min-h-screen bg-base-200">
       <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6">
@@ -493,6 +562,7 @@ export default function HomeMenu() {
         ) : (
           <GameCard
             pokemon={pokemon}
+            generationLabel={pokemon?.generation ?? "-"}
             points={points}
             flashSignal={flashSignal}
             guess={guess}
@@ -502,6 +572,8 @@ export default function HomeMenu() {
             error={error}
             onGuessChange={setGuess}
             onGuessSubmit={handleGuessSubmit}
+            onForfeit={handleForfeit}
+            onGoHome={handleGoHome}
             onNextRound={startRound}
           />
         )}
