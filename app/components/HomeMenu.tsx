@@ -24,7 +24,7 @@ type PokemonData = {
 };
 
 const MAX_POINTS = 5;
-const MAX_POKEMON_ID = 151;
+const MAX_POKEMON_ID_FALLBACK = 1025;
 const typeNameCache = new Map<string, string | null>();
 const generationNamesCache = new Map<string, string[]>();
 
@@ -76,8 +76,9 @@ function getRevealPokemonName(pokemon: PokemonData): string {
   return `${pokemon.frenchName} (${englishName})`;
 }
 
-async function fetchRandomPokemon(): Promise<PokemonData> {
-  const randomId = Math.floor(Math.random() * MAX_POKEMON_ID) + 1;
+async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
+  const safeMax = Math.max(1, maxPokemonId);
+  const randomId = Math.floor(Math.random() * safeMax) + 1;
   const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${randomId}`);
 
   if (!response.ok) {
@@ -265,6 +266,8 @@ function GameCard({
       .join(" / ") ?? "-";
   const revealName = pokemon ? getRevealPokemonName(pokemon) : "-";
   const showResultModal = lastOutcome !== null && pokemon !== null;
+  const pointsDelta =
+    lastOutcome === "win" ? points : lastOutcome === "lose" || lastOutcome === "forfeit" ? -2 : 0;
   const modalTitle =
     lastOutcome === "win" ? "Victoire !" : lastOutcome === "forfeit" ? "Forfeit" : "Perdu !";
   const modalText =
@@ -403,6 +406,13 @@ function GameCard({
               <p className="text-center text-xl font-semibold">{revealName}</p>
             </div>
             <p className="text-center text-base">{modalText}</p>
+            <p
+              className={`text-center text-base font-semibold ${
+                pointsDelta >= 0 ? "text-primary" : "text-error"
+              }`}
+            >
+              Points gagnés / perdus : {pointsDelta >= 0 ? `+${pointsDelta}` : pointsDelta}
+            </p>
             <div className="modal-action">
               {lastOutcome === "forfeit" ? (
                 <>
@@ -436,6 +446,7 @@ export default function HomeMenu() {
   const [generationPokemonNames, setGenerationPokemonNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [maxPokemonId, setMaxPokemonId] = useState<number>(MAX_POKEMON_ID_FALLBACK);
 
   const canSubmit = useMemo(() => guess.trim().length > 0, [guess]);
   const guessSuggestions = useMemo(() => {
@@ -475,6 +486,29 @@ export default function HomeMenu() {
     };
   }, [pokemon?.generationSlug]);
 
+  useEffect(() => {
+    // Permet de tirer au hasard parmi toutes les générations (pas seulement la Gen 1).
+    let isCancelled = false;
+
+    async function loadMaxPokemonId() {
+      try {
+        const response = await fetch("https://pokeapi.co/api/v2/pokemon?limit=1");
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!isCancelled && typeof data?.count === "number") {
+          setMaxPokemonId(data.count);
+        }
+      } catch {
+        // Fallback gardé.
+      }
+    }
+
+    loadMaxPokemonId();
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   async function startRound() {
     setLoading(true);
     setError(null);
@@ -486,7 +520,7 @@ export default function HomeMenu() {
     setGenerationPokemonNames([]);
 
     try {
-      const randomPokemon = await fetchRandomPokemon();
+      const randomPokemon = await fetchRandomPokemon(maxPokemonId);
       setPokemon(randomPokemon);
     } catch (fetchError) {
       const text = fetchError instanceof Error ? fetchError.message : "Erreur inconnue.";
