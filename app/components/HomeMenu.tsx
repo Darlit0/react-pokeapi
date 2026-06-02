@@ -550,7 +550,6 @@ export default function HomeMenu() {
 
     if (isGoodAnswer) {
       setGuess("");
-      setPoints(MAX_POINTS);
       setLastOutcome("win");
       return;
     }
