@@ -39,6 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
+.c
 # documentation
 Un-jour-une-ressource.pdf
