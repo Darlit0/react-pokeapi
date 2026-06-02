@@ -165,9 +165,24 @@ async function fetchGenerationPokemonNames(generationSlug: string): Promise<stri
   }
 
   const data = await response.json();
-  const names = (data.pokemon_species ?? []).map((entry: { name: string }) =>
-    formatPokemonName(entry.name)
+  const speciesList: Array<{ name: string; url?: string }> = data.pokemon_species ?? [];
+
+  // Fetch each species resource to obtain the localized French name when available.
+  const names = await Promise.all(
+    speciesList.map(async (entry) => {
+      const speciesUrl = entry.url ?? `https://pokeapi.co/api/v2/pokemon-species/${entry.name}`;
+      try {
+        const res = await fetch(speciesUrl);
+        if (!res.ok) return formatPokemonName(entry.name);
+        const speciesData = await res.json();
+        const french = getLocalizedSpeciesName(speciesData.names ?? [], "fr");
+        return french ? french : formatPokemonName(entry.name);
+      } catch {
+        return formatPokemonName(entry.name);
+      }
+    })
   );
+
   generationNamesCache.set(generationSlug, names);
   return names;
 }
