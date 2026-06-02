@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import PokemonSideCarousels from "./PokemonSideCarousels";
 
@@ -238,11 +238,25 @@ function HomeCard({ onStart }: { onStart: () => void }) {
   );
 }
 
+async function saveGameHistory(outcome: "win" | "lose" | "forfeit", score: number) {
+  try {
+    await fetch("/api/game-history", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ outcome, score }),
+    });
+  } catch {
+    // L'historique ne doit pas bloquer la fin de partie.
+  }
+}
+
 function GameCard({
   pokemon,
   generationLabel,
   points,
-  flashSignal,
+  flashHit,
   guess,
   suggestions,
   lastOutcome,
@@ -257,7 +271,7 @@ function GameCard({
   pokemon: PokemonData | null;
   generationLabel: string;
   points: number;
-  flashSignal: number;
+  flashHit: boolean;
   guess: string;
   suggestions: string[];
   lastOutcome: "win" | "lose" | "forfeit" | null;
@@ -272,14 +286,6 @@ function GameCard({
   const canShowTypes = points <= 3;
   const canShowSprite = points <= 1;
   const gameOver = points === 0 || lastOutcome !== null;
-  const [flashHit, setFlashHit] = useState(false);
-
-  useEffect(() => {
-    if (flashSignal === 0) return;
-    setFlashHit(true);
-    const timer = window.setTimeout(() => setFlashHit(false), 700);
-    return () => window.clearTimeout(timer);
-  }, [flashSignal]);
 
   const displayTypes =
     pokemon?.types
@@ -463,15 +469,65 @@ function GameCard({
 
 export default function HomeMenu() {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{ id: string; email: string; name: string | null } | null>(null);
   const [pokemon, setPokemon] = useState<PokemonData | null>(null);
   const [points, setPoints] = useState(MAX_POINTS);
-  const [flashSignal, setFlashSignal] = useState(0);
+  const [flashHit, setFlashHit] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<"win" | "lose" | "forfeit" | null>(null);
   const [guess, setGuess] = useState("");
   const [generationPokemonNames, setGenerationPokemonNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [maxPokemonId, setMaxPokemonId] = useState<number>(MAX_POKEMON_ID_FALLBACK);
+  const flashTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadSession() {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store" });
+        if (!response.ok) {
+          if (!isCancelled) {
+            setCurrentUser(null);
+          }
+          return;
+        }
+
+        const data = (await response.json()) as {
+          user: { id: string; email: string; name: string | null };
+        };
+
+        if (!isCancelled) {
+          setCurrentUser(data.user);
+        }
+      } catch {
+        if (!isCancelled) {
+          setCurrentUser(null);
+        }
+      }
+    }
+
+    loadSession();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setCurrentUser(null);
+  }
+
+  useEffect(() => {
+    return () => {
+      const timer = flashTimerRef.current;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, []);
 
   const canSubmit = useMemo(() => guess.trim().length > 0, [guess]);
   const guessSuggestions = useMemo(() => {
@@ -539,7 +595,7 @@ export default function HomeMenu() {
     setError(null);
     setPokemon(null);
     setPoints(MAX_POINTS);
-    setFlashSignal(0);
+    setFlashHit(false);
     setLastOutcome(null);
     setGuess("");
     setGenerationPokemonNames([]);
@@ -574,6 +630,7 @@ export default function HomeMenu() {
       .includes(cleanGuess);
 
     if (isGoodAnswer) {
+      void saveGameHistory("win", points);
       setGuess("");
       setLastOutcome("win");
       return;
@@ -581,8 +638,13 @@ export default function HomeMenu() {
 
     const nextPoints = Math.max(0, points - 1);
     setPoints(nextPoints);
-    setFlashSignal((previous) => previous + 1);
+    if (flashTimerRef.current !== null) {
+      window.clearTimeout(flashTimerRef.current);
+    }
+    setFlashHit(true);
+    flashTimerRef.current = window.setTimeout(() => setFlashHit(false), 700);
     if (nextPoints === 0) {
+      void saveGameHistory("lose", nextPoints);
       setLastOutcome("lose");
     }
     setGuess("");
@@ -590,6 +652,7 @@ export default function HomeMenu() {
 
   function handleForfeit() {
     if (!pokemon || lastOutcome !== null) return;
+    void saveGameHistory("forfeit", points);
     setLastOutcome("forfeit");
   }
 
@@ -597,7 +660,7 @@ export default function HomeMenu() {
     setIsPlaying(false);
     setPokemon(null);
     setPoints(MAX_POINTS);
-    setFlashSignal(0);
+    setFlashHit(false);
     setLastOutcome(null);
     setGuess("");
     setError(null);
@@ -607,9 +670,23 @@ export default function HomeMenu() {
   return (
     <div className="hero relative min-h-screen bg-base-200">
       <div className="absolute right-4 top-4 z-20 sm:right-6 sm:top-6">
-        <Link href="/login" className="btn btn-primary btn-sm sm:btn-md">
-          Connexion
-        </Link>
+        {currentUser ? (
+          <div className="flex items-center gap-2">
+            <Link
+              href="/profile"
+              className="hidden rounded-full bg-base-100 px-3 py-2 text-sm shadow transition hover:bg-base-300 sm:inline-flex"
+            >
+              {currentUser.name ?? currentUser.email}
+            </Link>
+            <button type="button" className="btn btn-outline btn-sm sm:btn-md" onClick={handleLogout}>
+              Déconnexion
+            </button>
+          </div>
+        ) : (
+          <Link href="/login" className="btn btn-primary btn-sm sm:btn-md">
+            Connexion
+          </Link>
+        )}
       </div>
 
       <PokemonSideCarousels />
@@ -622,7 +699,7 @@ export default function HomeMenu() {
             pokemon={pokemon}
             generationLabel={pokemon?.generation ?? "-"}
             points={points}
-            flashSignal={flashSignal}
+            flashHit={flashHit}
             guess={guess}
             suggestions={guessSuggestions}
             lastOutcome={lastOutcome}

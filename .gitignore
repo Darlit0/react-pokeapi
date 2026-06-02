@@ -42,3 +42,19 @@ next-env.d.ts
 .c*
 # documentation
 Un-jour-une-ressource.pdf
+
+# Local DB, IDE and temp files
+/prisma/dev.db
+/prisma/dev.db-journal
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+
+# Local env (do not commit)
+.env.local
+
+# Local history / temp
+.localhistory/
+*.p12
