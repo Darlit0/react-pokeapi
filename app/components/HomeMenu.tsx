@@ -398,7 +398,7 @@ function GameCard({
                 onChange={(event) => onGuessChange(event.target.value)}
                 disabled={gameOver}
                 list="pokemon-name-suggestions"
-                autoComplete="off"
+                autoComplete="on"
               />
               <button type="submit" className="btn btn-primary btn-lg md:min-w-52" disabled={gameOver}>
                 Valider
@@ -532,7 +532,7 @@ export default function HomeMenu() {
   const canSubmit = useMemo(() => guess.trim().length > 0, [guess]);
   const guessSuggestions = useMemo(() => {
     const normalizedGuess = normalizePokemonName(guess);
-    if (normalizedGuess.length < 3) return [];
+    if (normalizedGuess.length < 1) return [];
 
     return generationPokemonNames
       .filter((name) => normalizePokemonName(name).includes(normalizedGuess))
