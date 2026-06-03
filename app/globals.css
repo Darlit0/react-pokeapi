@@ -24,6 +24,10 @@
   animation: game-danger-hit 700ms ease-out;
 }
 
+.pokemon-sprite-silhouette {
+  filter: brightness(0);
+}
+
 @keyframes game-danger-hit {
   0%,
   100% {

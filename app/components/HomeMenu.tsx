@@ -379,7 +379,7 @@ function GameCard({
                         alt="Sprite Pokémon"
                         width={220}
                         height={220}
-                        className="mx-auto h-56 w-full object-contain md:h-64"
+                        className="pokemon-sprite-silhouette mx-auto h-56 w-full object-contain md:h-64"
                       />
                     ) : (
                       <span className="block text-8xl leading-none md:text-9xl">?</span>
