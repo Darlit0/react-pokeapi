@@ -87,6 +87,76 @@ function getRevealPokemonName(pokemon: PokemonData): string {
   return `${pokemon.frenchName} (${englishName})`;
 }
 
+function formatTypesDisplay(types: Array<{ english: string; french: string | null }>): string {
+  return types
+    .map((typeName) => {
+      const en = formatPokemonName(typeName.english);
+      if (!typeName.french) return en;
+      return `${typeName.french} (${en})`;
+    })
+    .join(" / ");
+}
+
+type TypeFeedback =
+  | { kind: "partial"; matched: number; total: number }
+  | { kind: "full"; display: string };
+
+function getTypeFeedback(
+  targetTypes: Array<{ english: string; french: string | null }>,
+  guessedTypeSlugs: string[],
+  guessedTypes: Array<{ english: string; french: string | null }>
+): TypeFeedback | null {
+  const targetSlugs = targetTypes.map((type) => type.english);
+  const matchedCount = targetSlugs.filter((slug) => guessedTypeSlugs.includes(slug)).length;
+  if (matchedCount === 0) return null;
+
+  const targetCount = targetSlugs.length;
+  const allTypesMatch =
+    targetCount === guessedTypeSlugs.length &&
+    targetSlugs.every((slug) => guessedTypeSlugs.includes(slug)) &&
+    guessedTypeSlugs.every((slug) => targetSlugs.includes(slug));
+
+  if (allTypesMatch) {
+    return { kind: "full", display: formatTypesDisplay(guessedTypes) };
+  }
+
+  return { kind: "partial", matched: matchedCount, total: targetCount };
+}
+
+async function resolveTypesFromApi(
+  entries: Array<{ type: { name: string; url: string } }>
+): Promise<Array<{ english: string; french: string | null }>> {
+  return Promise.all(
+    entries.map(async (entry) => {
+      const english = entry.type.name;
+
+      if (!entry.type.url) {
+        return { english, french: null };
+      }
+
+      if (typeNameCache.has(english)) {
+        return { english, french: typeNameCache.get(english) ?? null };
+      }
+
+      try {
+        const typeResponse = await fetch(entry.type.url);
+        if (!typeResponse.ok) {
+          typeNameCache.set(english, null);
+          return { english, french: null };
+        }
+
+        const typeData = await typeResponse.json();
+        const french = getLocalizedSpeciesName(typeData.names ?? [], "fr");
+        typeNameCache.set(english, french);
+        return { english, french };
+      } catch {
+        typeNameCache.set(english, null);
+        return { english, french: null };
+      }
+    })
+  );
+}
+
 async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
   const safeMax = Math.max(1, maxPokemonId);
   const randomId = Math.floor(Math.random() * safeMax) + 1;
@@ -117,35 +187,7 @@ async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
     }
   }
 
-  const types = await Promise.all(
-    data.types.map(async (entry: { type: { name: string; url: string } }) => {
-      const english = entry.type.name;
-
-      if (!entry.type.url) {
-        return { english, french: null };
-      }
-
-      if (typeNameCache.has(english)) {
-        return { english, french: typeNameCache.get(english) ?? null };
-      }
-
-      try {
-        const typeResponse = await fetch(entry.type.url);
-        if (!typeResponse.ok) {
-          typeNameCache.set(english, null);
-          return { english, french: null };
-        }
-
-        const typeData = await typeResponse.json();
-        const french = getLocalizedSpeciesName(typeData.names ?? [], "fr");
-        typeNameCache.set(english, french);
-        return { english, french };
-      } catch {
-        typeNameCache.set(english, null);
-        return { english, french: null };
-      }
-    })
-  );
+  const types = await resolveTypesFromApi(data.types);
 
   return {
     id: data.id,
@@ -279,7 +321,11 @@ function GameCard({
   lastOutcome: "win" | "lose" | "forfeit" | null;
   loading: boolean;
   error: string | null;
-  lastWrongEntry: { display: string; stats: PokemonData["stats"]; matchedTypeLabel: string | null } | null;
+  lastWrongEntry: {
+    display: string;
+    stats: PokemonData["stats"];
+    typeFeedback: TypeFeedback | null;
+  } | null;
   onGuessChange: (value: string) => void;
   onGuessSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onForfeit: () => void;
@@ -290,15 +336,15 @@ function GameCard({
   const canShowSprite = points <= 1;
   const gameOver = points === 0 || lastOutcome !== null;
 
-  const displayTypes =
-    pokemon?.types
-      .map((typeName) => {
-        const en = formatPokemonName(typeName.english);
-        if (!typeName.french) return en;
-        return `${typeName.french} (${en})`;
-      })
-      .join(" / ") ?? "-";
-  const targetTypeSlugs = pokemon?.types.map((typeName) => typeName.english) ?? [];
+  const displayTypes = pokemon ? formatTypesDisplay(pokemon.types) : "-";
+  const partialTypeHint =
+    !canShowTypes && lastWrongEntry?.typeFeedback?.kind === "partial"
+      ? `${lastWrongEntry.typeFeedback.matched}/${lastWrongEntry.typeFeedback.total}`
+      : null;
+  const fullTypeHint =
+    !canShowTypes && lastWrongEntry?.typeFeedback?.kind === "full"
+      ? lastWrongEntry.typeFeedback.display
+      : null;
   const revealName = pokemon ? getRevealPokemonName(pokemon) : "-";
   const showResultModal = lastOutcome !== null && pokemon !== null;
   const pointsDelta =
@@ -376,8 +422,14 @@ function GameCard({
               <div className="stats shadow">
                 <div className="stat">
                   <div className="stat-title text-sm">Type(s) (3 points restants)</div>
-                  <div className="stat-value whitespace-normal break-words text-primary text-2xl leading-tight md:text-3xl">
-                    {canShowTypes ? displayTypes : "???"}
+                  <div className="stat-value flex flex-col items-center gap-2 whitespace-normal break-words text-primary text-2xl leading-tight md:text-3xl">
+                    {canShowTypes ? displayTypes : <span>???</span>}
+                    {partialTypeHint && (
+                      <span className="text-xl font-semibold text-info md:text-2xl">{partialTypeHint}</span>
+                    )}
+                    {fullTypeHint && (
+                      <span className="text-base font-medium text-success md:text-lg">{fullTypeHint}</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -389,6 +441,11 @@ function GameCard({
                     {canShowTypes
                       ? `${pokemon.stats.specialAttack} / ${pokemon.stats.specialDefense}`
                       : "??? / ???"}
+                    {lastWrongEntry && (
+                      <span className="ml-3 badge badge-ghost badge-sm">
+                        {lastWrongEntry.stats.specialAttack} / {lastWrongEntry.stats.specialDefense}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -435,12 +492,9 @@ function GameCard({
             </datalist>
 
             {lastWrongEntry && lastOutcome === null && (
-              <div className="mt-2 flex items-center gap-3">
-                <span className="text-sm text-base-content/70">Entré :</span>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <span className="text-sm text-base-content/70">Dernier guess :</span>
                 <span className="badge badge-ghost">{lastWrongEntry.display}</span>
-                {lastWrongEntry.matchedTypeLabel && (
-                  <span className="badge badge-info badge-outline">{lastWrongEntry.matchedTypeLabel}</span>
-                )}
               </div>
             )}
 
@@ -513,10 +567,11 @@ export default function HomeMenu() {
   const [generationNameMap, setGenerationNameMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastWrongEntry, setLastWrongEntry] = useState<
-    | { display: string; stats: PokemonData["stats"]; matchedTypeLabel: string | null }
-    | null
-  >(null);
+  const [lastWrongEntry, setLastWrongEntry] = useState<{
+    display: string;
+    stats: PokemonData["stats"];
+    typeFeedback: TypeFeedback | null;
+  } | null>(null);
   const [maxPokemonId, setMaxPokemonId] = useState<number>(MAX_POKEMON_ID_FALLBACK);
   const flashTimerRef = useRef<number | null>(null);
 
@@ -711,16 +766,9 @@ export default function HomeMenu() {
         const speed = getStat("speed", data.stats);
         const specialAttack = getStat("special-attack", data.stats);
         const specialDefense = getStat("special-defense", data.stats);
-        const guessedTypeSlugs = (data.types ?? []).map((entry: { type?: { name?: string } }) => entry.type?.name).filter(
-          (value: string | undefined): value is string => Boolean(value)
-        );
-        const matchedTypeIndex = targetTypeSlugs.findIndex((typeSlug) => guessedTypeSlugs.includes(typeSlug));
-        const matchedTypeLabel =
-          matchedTypeIndex === 0
-            ? "premier type"
-            : matchedTypeIndex === 1
-              ? "second type"
-              : null;
+        const guessedTypes = await resolveTypesFromApi(data.types ?? []);
+        const guessedTypeSlugs = guessedTypes.map((type) => type.english);
+        const typeFeedback = getTypeFeedback(pokemon.types, guessedTypeSlugs, guessedTypes);
 
         // Essayer d'obtenir le nom français si disponible.
         let displayName = formatPokemonName(data.name);
@@ -740,14 +788,14 @@ export default function HomeMenu() {
         setLastWrongEntry({
           display: displayName,
           stats: { hp, attack, defense, speed, specialAttack, specialDefense },
-          matchedTypeLabel,
+          typeFeedback,
         });
       } else {
         // Aucun Pokémon trouvé pour la saisie — afficher seulement le nom entré.
         setLastWrongEntry({
           display: guess.trim(),
           stats: { hp: 0, attack: 0, defense: 0, speed: 0, specialAttack: 0, specialDefense: 0 },
-          matchedTypeLabel: null,
+          typeFeedback: null,
         });
       }
     } catch {
