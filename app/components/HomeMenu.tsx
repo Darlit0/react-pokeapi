@@ -27,6 +27,7 @@ const MAX_POINTS = 5;
 const MAX_POKEMON_ID_FALLBACK = 1025;
 const typeNameCache = new Map<string, string | null>();
 const generationNamesCache = new Map<string, string[]>();
+const generationNamesSlugCache = new Map<string, Array<{ display: string; slug: string }>>();
 
 function normalizePokemonName(value: string): string {
   return value
@@ -165,8 +166,8 @@ async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
   };
 }
 
-async function fetchGenerationPokemonNames(generationSlug: string): Promise<string[]> {
-  const cached = generationNamesCache.get(generationSlug);
+async function fetchGenerationPokemonNames(generationSlug: string): Promise<Array<{ display: string; slug: string }>> {
+  const cached = generationNamesSlugCache.get(generationSlug);
   if (cached) return cached;
 
   const response = await fetch(`https://pokeapi.co/api/v2/generation/${generationSlug}`);
@@ -177,24 +178,24 @@ async function fetchGenerationPokemonNames(generationSlug: string): Promise<stri
   const data = await response.json();
   const speciesList: Array<{ name: string; url?: string }> = data.pokemon_species ?? [];
 
-  // Fetch each species resource to obtain the localized French name when available.
-  const names = await Promise.all(
+  const entries = await Promise.all(
     speciesList.map(async (entry) => {
       const speciesUrl = entry.url ?? `https://pokeapi.co/api/v2/pokemon-species/${entry.name}`;
       try {
         const res = await fetch(speciesUrl);
-        if (!res.ok) return formatPokemonName(entry.name);
+        if (!res.ok) return { display: formatPokemonName(entry.name), slug: entry.name };
         const speciesData = await res.json();
         const french = getLocalizedSpeciesName(speciesData.names ?? [], "fr");
-        return french ? french : formatPokemonName(entry.name);
+        return { display: french ? french : formatPokemonName(entry.name), slug: entry.name };
       } catch {
-        return formatPokemonName(entry.name);
+        return { display: formatPokemonName(entry.name), slug: entry.name };
       }
     })
   );
 
-  generationNamesCache.set(generationSlug, names);
-  return names;
+  generationNamesSlugCache.set(generationSlug, entries);
+  generationNamesCache.set(generationSlug, entries.map((e) => e.display));
+  return entries;
 }
 
 function HomeCard({ onStart }: { onStart: () => void }) {
@@ -262,6 +263,7 @@ function GameCard({
   lastOutcome,
   loading,
   error,
+  lastWrongEntry,
   onGuessChange,
   onGuessSubmit,
   onForfeit,
@@ -277,6 +279,7 @@ function GameCard({
   lastOutcome: "win" | "lose" | "forfeit" | null;
   loading: boolean;
   error: string | null;
+  lastWrongEntry: { display: string; stats: PokemonData["stats"]; matchedTypeLabel: string | null } | null;
   onGuessChange: (value: string) => void;
   onGuessSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onForfeit: () => void;
@@ -295,6 +298,7 @@ function GameCard({
         return `${typeName.french} (${en})`;
       })
       .join(" / ") ?? "-";
+  const targetTypeSlugs = pokemon?.types.map((typeName) => typeName.english) ?? [];
   const revealName = pokemon ? getRevealPokemonName(pokemon) : "-";
   const showResultModal = lastOutcome !== null && pokemon !== null;
   const pointsDelta =
@@ -332,19 +336,39 @@ function GameCard({
             <div className="stats stats-vertical w-full shadow md:stats-horizontal">
               <div className="stat">
                 <div className="stat-title text-base">PV</div>
-                <div className="stat-value text-primary text-4xl">{pokemon.stats.hp}</div>
+                <div className="stat-value text-primary text-4xl">
+                  {pokemon.stats.hp}
+                  {lastWrongEntry && (
+                    <span className="ml-3 badge badge-ghost badge-sm">{lastWrongEntry.stats.hp}</span>
+                  )}
+                </div>
               </div>
               <div className="stat">
                 <div className="stat-title text-base">Attaque</div>
-                <div className="stat-value text-secondary text-4xl">{pokemon.stats.attack}</div>
+                <div className="stat-value text-secondary text-4xl">
+                  {pokemon.stats.attack}
+                  {lastWrongEntry && (
+                    <span className="ml-3 badge badge-ghost badge-sm">{lastWrongEntry.stats.attack}</span>
+                  )}
+                </div>
               </div>
               <div className="stat">
                 <div className="stat-title text-base">Défense</div>
-                <div className="stat-value text-accent text-4xl">{pokemon.stats.defense}</div>
+                <div className="stat-value text-accent text-4xl">
+                  {pokemon.stats.defense}
+                  {lastWrongEntry && (
+                    <span className="ml-3 badge badge-ghost badge-sm">{lastWrongEntry.stats.defense}</span>
+                  )}
+                </div>
               </div>
               <div className="stat">
                 <div className="stat-title text-base">Vitesse</div>
-                <div className="stat-value text-4xl">{pokemon.stats.speed}</div>
+                <div className="stat-value text-4xl">
+                  {pokemon.stats.speed}
+                  {lastWrongEntry && (
+                    <span className="ml-3 badge badge-ghost badge-sm">{lastWrongEntry.stats.speed}</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -409,6 +433,16 @@ function GameCard({
                 <option key={suggestion} value={suggestion} />
               ))}
             </datalist>
+
+            {lastWrongEntry && lastOutcome === null && (
+              <div className="mt-2 flex items-center gap-3">
+                <span className="text-sm text-base-content/70">Entré :</span>
+                <span className="badge badge-ghost">{lastWrongEntry.display}</span>
+                {lastWrongEntry.matchedTypeLabel && (
+                  <span className="badge badge-info badge-outline">{lastWrongEntry.matchedTypeLabel}</span>
+                )}
+              </div>
+            )}
 
             <div className="card-actions justify-end">
               <button type="button" className="btn btn-outline btn-lg" onClick={onForfeit} disabled={gameOver}>
@@ -476,8 +510,13 @@ export default function HomeMenu() {
   const [lastOutcome, setLastOutcome] = useState<"win" | "lose" | "forfeit" | null>(null);
   const [guess, setGuess] = useState("");
   const [generationPokemonNames, setGenerationPokemonNames] = useState<string[]>([]);
+  const [generationNameMap, setGenerationNameMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastWrongEntry, setLastWrongEntry] = useState<
+    | { display: string; stats: PokemonData["stats"]; matchedTypeLabel: string | null }
+    | null
+  >(null);
   const [maxPokemonId, setMaxPokemonId] = useState<number>(MAX_POKEMON_ID_FALLBACK);
   const flashTimerRef = useRef<number | null>(null);
 
@@ -549,9 +588,14 @@ export default function HomeMenu() {
       }
 
       try {
-        const names = await fetchGenerationPokemonNames(pokemon.generationSlug);
+        const entries = await fetchGenerationPokemonNames(pokemon.generationSlug);
         if (!isCancelled) {
-          setGenerationPokemonNames(names);
+          setGenerationPokemonNames(entries.map((e) => e.display));
+          const map: Record<string, string> = {};
+          for (const e of entries) {
+            map[normalizePokemonName(e.display)] = e.slug;
+          }
+          setGenerationNameMap(map);
         }
       } catch {
         if (!isCancelled) {
@@ -598,6 +642,7 @@ export default function HomeMenu() {
     setFlashHit(false);
     setLastOutcome(null);
     setGuess("");
+    setLastWrongEntry(null);
     setGenerationPokemonNames([]);
 
     try {
@@ -616,7 +661,7 @@ export default function HomeMenu() {
     await startRound();
   }
 
-  function handleGuessSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleGuessSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!pokemon || points === 0 || !canSubmit) return;
@@ -632,8 +677,81 @@ export default function HomeMenu() {
     if (isGoodAnswer) {
       void saveGameHistory("win", points);
       setGuess("");
+      setLastWrongEntry(null);
       setLastOutcome("win");
       return;
+    }
+
+    // Tentative de récupération des stats du Pokémon entré pour l'afficher.
+    setLastWrongEntry(null);
+    // Si l'utilisateur a entré le nom en français, essayer de le mapper au slug anglais via generationNameMap.
+    const normalizedGuess = normalizePokemonName(guess);
+    const mappedSlug = generationNameMap[normalizedGuess] ?? null;
+    const apiName = mappedSlug ?? normalizedGuess.replace(/\s+/g, "-");
+    try {
+      let data: any | null = null;
+      let resp = await fetch(`https://pokeapi.co/api/v2/pokemon/${apiName}`);
+      if (!resp.ok) {
+        // Essayer la ressource species -> obtenir une variété puis récupérer le pokemon
+        const speciesResp = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${apiName}`);
+        if (speciesResp.ok) {
+          const speciesData = await speciesResp.json();
+          const firstVar = speciesData.varieties?.[0]?.pokemon?.name ?? null;
+          if (firstVar) {
+            resp = await fetch(`https://pokeapi.co/api/v2/pokemon/${firstVar}`);
+          }
+        }
+      }
+
+      if (resp && resp.ok) {
+        data = await resp.json();
+        const hp = getStat("hp", data.stats);
+        const attack = getStat("attack", data.stats);
+        const defense = getStat("defense", data.stats);
+        const speed = getStat("speed", data.stats);
+        const specialAttack = getStat("special-attack", data.stats);
+        const specialDefense = getStat("special-defense", data.stats);
+        const guessedTypeSlugs = (data.types ?? []).map((entry: { type?: { name?: string } }) => entry.type?.name).filter(
+          (value: string | undefined): value is string => Boolean(value)
+        );
+        const matchedTypeIndex = targetTypeSlugs.findIndex((typeSlug) => guessedTypeSlugs.includes(typeSlug));
+        const matchedTypeLabel =
+          matchedTypeIndex === 0
+            ? "premier type"
+            : matchedTypeIndex === 1
+              ? "second type"
+              : null;
+
+        // Essayer d'obtenir le nom français si disponible.
+        let displayName = formatPokemonName(data.name);
+        try {
+          if (data.species?.url) {
+            const speciesResp = await fetch(data.species.url);
+            if (speciesResp.ok) {
+              const speciesData = await speciesResp.json();
+              const french = getLocalizedSpeciesName(speciesData.names ?? [], "fr");
+              if (french) displayName = `${french} (${displayName})`;
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+
+        setLastWrongEntry({
+          display: displayName,
+          stats: { hp, attack, defense, speed, specialAttack, specialDefense },
+          matchedTypeLabel,
+        });
+      } else {
+        // Aucun Pokémon trouvé pour la saisie — afficher seulement le nom entré.
+        setLastWrongEntry({
+          display: guess.trim(),
+          stats: { hp: 0, attack: 0, defense: 0, speed: 0, specialAttack: 0, specialDefense: 0 },
+          matchedTypeLabel: null,
+        });
+      }
+    } catch {
+      // Ne pas bloquer en cas d'erreur réseau ou nom inconnu.
     }
 
     const nextPoints = Math.max(0, points - 1);
@@ -653,6 +771,7 @@ export default function HomeMenu() {
   function handleForfeit() {
     if (!pokemon || lastOutcome !== null) return;
     void saveGameHistory("forfeit", points);
+    setLastWrongEntry(null);
     setLastOutcome("forfeit");
   }
 
@@ -663,6 +782,7 @@ export default function HomeMenu() {
     setFlashHit(false);
     setLastOutcome(null);
     setGuess("");
+    setLastWrongEntry(null);
     setError(null);
     setGenerationPokemonNames([]);
   }
@@ -705,6 +825,7 @@ export default function HomeMenu() {
             lastOutcome={lastOutcome}
             loading={loading}
             error={error}
+            lastWrongEntry={lastWrongEntry}
             onGuessChange={setGuess}
             onGuessSubmit={handleGuessSubmit}
             onForfeit={handleForfeit}
