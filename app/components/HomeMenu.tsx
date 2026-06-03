@@ -157,7 +157,14 @@ async function resolveTypesFromApi(
   );
 }
 
-async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
+const RANDOM_POKEMON_MAX_ATTEMPTS = 5;
+const RANDOM_POKEMON_RETRY_DELAY_MS = 500;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchRandomPokemonOnce(maxPokemonId: number): Promise<PokemonData> {
   const safeMax = Math.max(1, maxPokemonId);
   const randomId = Math.floor(Math.random() * safeMax) + 1;
   const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${randomId}`);
@@ -206,6 +213,23 @@ async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
       specialDefense: getStat("special-defense", data.stats),
     },
   };
+}
+
+async function fetchRandomPokemon(maxPokemonId: number): Promise<PokemonData> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= RANDOM_POKEMON_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fetchRandomPokemonOnce(maxPokemonId);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Erreur inconnue.");
+      if (attempt < RANDOM_POKEMON_MAX_ATTEMPTS) {
+        await sleep(RANDOM_POKEMON_RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Impossible de récupérer les données Pokémon.");
 }
 
 async function fetchGenerationPokemonNames(generationSlug: string): Promise<Array<{ display: string; slug: string }>> {
